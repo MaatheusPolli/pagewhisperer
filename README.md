@@ -67,4 +67,3 @@ Matheus Gasparotto Polli
 
 ## 📄 Licença
 Distribuído sob a licença MIT. Veja `LICENSE` para mais informações.
-🎓 Engenharia de Software com IA Aplicada — UNIPDS
