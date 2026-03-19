@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PageWhisperer</title>
+    <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PageWhisperer</h1>
+            <div class="status-indicator" id="status-dot"></div>
+        </header>
+
+        <div class="mode-selector">
+            <button class="mode-btn active" data-mode="normal">Normal</button>
+            <button class="mode-btn" data-mode="technical">Técnico</button>
+            <button class="mode-btn" data-mode="eli5">ELI5</button>
+            <button class="mode-btn" data-mode="actions">Ações</button>
+        </div>
+
+        <main id="main-content">
+            <div id="welcome-screen">
+                <p>Clique no botão abaixo para resumir a página atual.</p>
+                <button id="summarize-btn">Resumir Página</button>
+                <div id="history-section" class="hidden">
+                    <h4>Histórico Recente</h4>
+                    <div id="history-list"></div>
+                </div>
+            </div>
+
+            <div id="loading-screen" class="hidden">
+                <div class="spinner"></div>
+                <p id="loading-text">Lendo conteúdo...</p>
+                <div id="progress-container" class="hidden">
+                    <div class="progress-bar">
+                        <div id="progress-fill"></div>
+                    </div>
+                    <span id="progress-text">0%</span>
+                </div>
+            </div>
+
+            <div id="result-screen" class="hidden">
+                <div class="output-header">
+                    <h3>Resumo</h3>
+                    <div class="action-buttons">
+                        <button id="copy-btn" title="Copiar">📋</button>
+                        <button id="export-btn" title="Exportar MD">💾</button>
+                        <button id="translate-toggle">Traduzir para PT</button>
+                    </div>
+                </div>
+                <div id="summary-output" class="content-area"></div>
+                
+                <div class="qa-section">
+                    <h3>Pergunte sobre a página</h3>
+                    <div class="qa-input-group">
+                        <input type="text" id="qa-input" placeholder="Digite sua dúvida...">
+                        <button id="qa-btn">Enviar</button>
+                    </div>
+                    <div id="qa-output" class="content-area hidden"></div>
+                </div>
+
+                <button id="reset-btn" class="secondary-btn">Novo Resumo</button>
+            </div>
+        </main>
+
+        <div id="error-screen" class="hidden">
+            <p id="error-message"></p>
+            <button id="retry-btn">Tentar Novamente</button>
+        </div>
+    </div>
+    <script type="module" src="panel.js"></script>
+</body>
+</html>
