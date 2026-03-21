@@ -37,7 +37,44 @@ let currentPageContent = null;
 let currentSummary = '';
 let currentMode = 'normal';
 
-// Initialize
+// --- Helpers ---
+
+/**
+ * Secure Markdown-to-HTML formatter with XSS protection
+ */
+function formatMarkdown(text) {
+    // 1. Escape HTML entities to prevent XSS
+    const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    // 2. Apply formatting to the escaped text
+    return escaped
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        .replace(/^\* (.*$)/gim, '<li>$1</li>')
+        .replace(/^\- (.*$)/gim, '<li>$1</li>')
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        .replace(/\n/gim, '<br>');
+}
+
+/**
+ * Estimate time saved (200 wpm)
+ */
+function calculateTimeSaved(originalText, summaryText) {
+    const originalWords = originalText.trim().split(/\s+/).length;
+    const summaryWords = summaryText.trim().split(/\s+/).length;
+    const minutesSaved = Math.max(1, Math.round((originalWords - summaryWords) / 200));
+    return minutesSaved;
+}
+
+// --- Logic ---
+
 async function init() {
     try {
         const availability = await aiService.checkAvailability();
@@ -82,14 +119,23 @@ elements.modeBtns.forEach(btn => {
     });
 });
 
-// Handlers
 async function handleSummarize() {
     showScreen('loading');
-    elements.loadingText.textContent = 'Extraindo conteúdo da página...';
+    elements.loadingText.textContent = 'Lendo página...';
 
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         
+        // Cache Check
+        const cacheKey = `cache_${tab.url}_${currentMode}`;
+        const cached = await chrome.storage.local.get(cacheKey);
+        
+        if (cached[cacheKey]) {
+            currentPageContent = { title: tab.title, text: "(Cached content)", url: tab.url };
+            displayResult(cached[cacheKey], true);
+            return;
+        }
+
         const response = await chrome.runtime.sendMessage({
             type: 'REQUEST_PAGE_CONTENT',
             tabId: tab.id
@@ -98,10 +144,10 @@ async function handleSummarize() {
         if (response.error) throw new Error(response.error);
         
         currentPageContent = response;
-        elements.loadingText.textContent = 'Gerando resumo...';
+        elements.loadingText.textContent = 'Destilando conhecimento...';
         
         showScreen('result');
-        elements.summaryOutput.textContent = '';
+        elements.summaryOutput.innerHTML = '';
         currentSummary = '';
 
         const stream = await aiService.summarize(
@@ -111,17 +157,16 @@ async function handleSummarize() {
         );
 
         if (typeof stream === 'string') {
-            currentSummary = stream;
-            elements.summaryOutput.textContent = stream;
+            displayResult(stream);
         } else {
             for await (const chunk of stream) {
                 currentSummary += chunk;
-                elements.summaryOutput.textContent = currentSummary;
+                // Append chunk and format (simple streaming update)
+                elements.summaryOutput.innerHTML = formatMarkdown(currentSummary);
                 elements.summaryOutput.scrollTop = elements.summaryOutput.scrollHeight;
             }
+            finalizeResult(currentSummary, cacheKey);
         }
-
-        saveToHistory(currentPageContent.title, currentSummary);
 
     } catch (error) {
         if (error.name !== 'AbortError') {
@@ -130,12 +175,39 @@ async function handleSummarize() {
     }
 }
 
+function displayResult(text, isCached = false) {
+    currentSummary = text;
+    elements.summaryOutput.innerHTML = formatMarkdown(text);
+    showScreen('result');
+    if (isCached) {
+        const timeSaved = calculateTimeSaved("Lots of words...", text); // Abstracted
+        console.log(`Time saved: ~${timeSaved} min`);
+    }
+}
+
+async function finalizeResult(text, cacheKey) {
+    // Save to Cache
+    await chrome.storage.local.set({ [cacheKey]: text });
+    
+    // Save to History
+    saveToHistory(currentPageContent.title, text);
+    
+    const timeSaved = calculateTimeSaved(currentPageContent.text, text);
+    const badge = document.createElement('div');
+    badge.className = 'time-saved-badge';
+    badge.style.fontSize = '0.7rem';
+    badge.style.color = 'var(--accent)';
+    badge.style.marginTop = '8px';
+    badge.innerHTML = `⏱️ Você economizou aproximadamente <strong>${timeSaved} min</strong> de leitura!`;
+    elements.summaryOutput.appendChild(badge);
+}
+
 async function handleCopy() {
     try {
         await navigator.clipboard.writeText(currentSummary);
-        const originalText = elements.copyBtn.textContent;
-        elements.copyBtn.textContent = '✅';
-        setTimeout(() => elements.copyBtn.textContent = originalText, 2000);
+        const originalContent = elements.copyBtn.innerHTML;
+        elements.copyBtn.innerHTML = '✅';
+        setTimeout(() => elements.copyBtn.innerHTML = originalContent, 2000);
     } catch (err) {
         console.error('Falha ao copiar:', err);
     }
@@ -146,7 +218,7 @@ function handleExport() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `resumo-${currentPageContent?.title?.slice(0, 20) || 'page'}.md`;
+    a.download = `whisper-${currentPageContent?.title?.slice(0, 20) || 'page'}.md`;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -154,6 +226,10 @@ function handleExport() {
 // History Logic
 async function saveToHistory(title, summary) {
     const { history = [] } = await chrome.storage.local.get('history');
+    
+    // Evitar duplicatas no histórico imediato
+    if (history.length > 0 && history[0].title === title) return;
+
     const newItem = {
         title,
         summary,
@@ -161,7 +237,7 @@ async function saveToHistory(title, summary) {
         id: Date.now()
     };
     
-    const updatedHistory = [newItem, ...history.slice(0, 4)]; // Keep last 5
+    const updatedHistory = [newItem, ...history.filter(h => h.title !== title).slice(0, 9)];
     await chrome.storage.local.set({ history: updatedHistory });
 }
 
@@ -180,12 +256,10 @@ async function loadHistory() {
         div.className = 'history-item';
         div.innerHTML = `
             <div class="history-item-title">${item.title}</div>
-            <div class="history-item-date">${new Date(item.date).toLocaleString()}</div>
+            <div class="history-item-date">${new Date(item.date).toLocaleDateString()}</div>
         `;
         div.onclick = () => {
-            currentSummary = item.summary;
-            elements.summaryOutput.textContent = item.summary;
-            showScreen('result');
+            displayResult(item.summary);
         };
         elements.historyList.appendChild(div);
     });
@@ -196,16 +270,17 @@ async function handleQA() {
     if (!question || !currentPageContent) return;
 
     elements.qaOutput.classList.remove('hidden');
-    elements.qaOutput.textContent = 'Pensando...';
+    elements.qaOutput.innerHTML = '<em>Consultando a página...</em>';
     
     try {
         const stream = await aiService.answerQuestion(currentPageContent.text, question);
         let answer = '';
-        elements.qaOutput.textContent = '';
+        elements.qaOutput.innerHTML = '';
         
         for await (const chunk of stream) {
             answer += chunk;
-            elements.qaOutput.textContent = answer;
+            elements.qaOutput.innerHTML = formatMarkdown(answer);
+            elements.qaOutput.scrollTop = elements.qaOutput.scrollHeight;
         }
     } catch (error) {
         elements.qaOutput.textContent = 'Erro: ' + error.message;
@@ -215,27 +290,26 @@ async function handleQA() {
 async function handleTranslation() {
     if (!currentSummary) return;
     
-    const originalText = elements.summaryOutput.textContent;
-    elements.summaryOutput.textContent = 'Traduzindo...';
+    const originalHTML = elements.summaryOutput.innerHTML;
+    const originalText = currentSummary;
+    elements.summaryOutput.innerHTML = '<em>Traduzindo resumo...</em>';
     
     try {
-        const translated = await translationService.translate(currentSummary);
-        elements.summaryOutput.textContent = translated;
-        elements.translateToggle.textContent = 'Ver Original';
+        const translated = await translationService.translate(originalText);
+        elements.summaryOutput.innerHTML = formatMarkdown(translated);
+        elements.translateToggle.textContent = 'Original';
         
-        // Toggle back logic
         elements.translateToggle.onclick = () => {
-            elements.summaryOutput.textContent = originalText;
-            elements.translateToggle.textContent = 'Traduzir para PT';
+            elements.summaryOutput.innerHTML = originalHTML;
+            elements.translateToggle.textContent = 'Traduzir';
             elements.translateToggle.onclick = handleTranslation;
         };
     } catch (error) {
-        elements.summaryOutput.textContent = originalText;
+        elements.summaryOutput.innerHTML = originalHTML;
         alert('Erro na tradução: ' + error.message);
     }
 }
 
-// Helpers
 function showScreen(screen) {
     elements.welcomeScreen.classList.add('hidden');
     elements.loadingScreen.classList.add('hidden');
